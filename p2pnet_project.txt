@@ -1,0 +1,1779 @@
+# Projeto P2P Overlay Network - Estrutura de Arquivos
+
+## Estrutura do Projeto
+
+```
+p2pnet/
+├── Makefile
+├── Vagrantfile
+├── README.md
+├── include/
+│   ├── common.h
+│   ├── peer_server.h
+│   ├── peer_client.h
+│   ├── network.h
+│   ├── protocol.h
+│   └── ui.h
+├── src/
+│   ├── peer_server_main.c
+│   ├── peer_server.c
+│   ├── p2pnet_main.c
+│   ├── peer_client.c
+│   ├── network.c
+│   ├── protocol.c
+│   └── ui.c
+└── scripts/
+    └── setup.sh
+```
+
+## Descrição dos Arquivos
+
+### Headers (include/)
+
+1. **common.h** - Definições comuns, estruturas de dados, constantes
+2. **peer_server.h** - Interface do servidor de peers (UDP)
+3. **peer_client.h** - Interface do cliente de peers
+4. **network.h** - Funções de rede (TCP/UDP, sockets)
+5. **protocol.h** - Implementação dos protocolos (LNK, FRC, QRY, etc)
+6. **ui.h** - Interface de usuário e comandos
+
+### Source (src/)
+
+1. **peer_server_main.c** - Programa principal do servidor de peers
+2. **peer_server.c** - Implementação do servidor de peers
+3. **p2pnet_main.c** - Programa principal do peer (aplicação p2pnet)
+4. **peer_client.c** - Cliente para comunicação com servidor de peers
+5. **network.c** - Implementação das funções de rede
+6. **protocol.c** - Implementação dos protocolos overlay
+7. **ui.c** - Implementação da interface de usuário
+
+## Divisão de Tarefas por Membro
+
+### Membro 1: Servidor de Peers e Comunicação UDP
+- peer_server.h / peer_server.c
+- peer_server_main.c
+- Parte UDP de network.c
+
+### Membro 2: Protocolos e Comunicação TCP
+- protocol.h / protocol.c
+- Parte TCP de network.c
+- Gestão de ligações overlay
+
+### Membro 3: Cliente e Interface de Usuário
+- peer_client.h / peer_client.c
+- ui.h / ui.c
+- p2pnet_main.c
+- Integração final
+
+---
+
+# Arquivos do Projeto
+
+## 1. include/common.h
+
+```c
+#ifndef COMMON_H
+#define COMMON_H
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/select.h>
+#include <errno.h>
+
+/* Constantes */
+#define MAX_NEIGHBORS 10
+#define MAX_IDENTIFIERS 100
+#define MAX_PEERS 100
+#define BUFFER_SIZE 4096
+#define MAX_IDENTIFIER_LEN 64
+#define DEFAULT_SERVER_IP "192.168.56.21"
+#define DEFAULT_SERVER_PORT 58000
+#define DEFAULT_HOPCOUNT 5
+
+/* Estruturas de Dados */
+
+/* Informação de um peer */
+typedef struct {
+    char ip[16];
+    int port;
+    int seqnumber;
+} PeerInfo;
+
+/* Informação de um vizinho */
+typedef struct {
+    PeerInfo info;
+    int socket_fd;
+    int is_external;  /* 1 = vizinho externo, 0 = vizinho interno */
+} Neighbor;
+
+/* Lista de vizinhos */
+typedef struct {
+    Neighbor neighbors[MAX_NEIGHBORS * 2];
+    int count;
+} NeighborList;
+
+/* Lista de identificadores */
+typedef struct {
+    char identifiers[MAX_IDENTIFIERS][MAX_IDENTIFIER_LEN];
+    int count;
+} IdentifierList;
+
+/* Lista de peers do servidor */
+typedef struct {
+    PeerInfo peers[MAX_PEERS];
+    int count;
+} PeerList;
+
+/* Estado do peer */
+typedef struct {
+    int seqnumber;
+    int tcp_port;
+    int tcp_server_fd;
+    int joined;
+    NeighborList neighbors;
+    IdentifierList identifiers;
+    
+    /* Configuração */
+    char server_ip[16];
+    int server_port;
+    int max_neighbors;
+    int max_hopcount;
+} PeerState;
+
+/* Registro no servidor de peers */
+typedef struct {
+    char ip[16];
+    int port;
+    int seqnumber;
+} PeerServerEntry;
+
+/* Funções auxiliares */
+void error_exit(const char *msg);
+void log_message(const char *format, ...);
+
+#endif /* COMMON_H */
+```
+
+## 2. include/network.h
+
+```c
+#ifndef NETWORK_H
+#define NETWORK_H
+
+#include "common.h"
+
+/* Funções UDP */
+int create_udp_socket();
+int udp_send(int sockfd, const char *ip, int port, const char *message);
+int udp_receive(int sockfd, char *buffer, int buffer_size, 
+                struct sockaddr_in *from_addr);
+
+/* Funções TCP Cliente */
+int tcp_connect(const char *ip, int port);
+int tcp_send(int sockfd, const char *message);
+int tcp_receive(int sockfd, char *buffer, int buffer_size);
+
+/* Funções TCP Servidor */
+int create_tcp_server(int port);
+int tcp_accept(int server_fd, char *client_ip);
+
+/* Funções auxiliares */
+void close_socket(int sockfd);
+int set_socket_nonblocking(int sockfd);
+
+#endif /* NETWORK_H */
+```
+
+## 3. include/peer_server.h
+
+```c
+#ifndef PEER_SERVER_H
+#define PEER_SERVER_H
+
+#include "common.h"
+
+/* Estrutura do servidor de peers */
+typedef struct {
+    PeerServerEntry entries[MAX_PEERS];
+    int count;
+    int next_seqnumber;
+    int sockfd;
+    int port;
+} PeerServer;
+
+/* Funções do servidor de peers */
+PeerServer* peer_server_create(int port);
+void peer_server_start(PeerServer *server);
+void peer_server_destroy(PeerServer *server);
+
+/* Handlers de comandos */
+void handle_register(PeerServer *server, const char *message, 
+                    struct sockaddr_in *client_addr, char *response);
+void handle_unregister(PeerServer *server, const char *message, char *response);
+void handle_peers_list(PeerServer *server, char *response);
+
+#endif /* PEER_SERVER_H */
+```
+
+## 4. include/peer_client.h
+
+```c
+#ifndef PEER_CLIENT_H
+#define PEER_CLIENT_H
+
+#include "common.h"
+
+/* Funções do cliente para servidor de peers */
+int peer_client_register(const char *server_ip, int server_port, 
+                         int tcp_port, int *seqnumber);
+int peer_client_unregister(const char *server_ip, int server_port, 
+                           int seqnumber);
+int peer_client_get_peers(const char *server_ip, int server_port, 
+                          PeerList *peer_list);
+
+#endif /* PEER_CLIENT_H */
+```
+
+## 5. include/protocol.h
+
+```c
+#ifndef PROTOCOL_H
+#define PROTOCOL_H
+
+#include "common.h"
+
+/* Protocolos de ligação overlay */
+int protocol_link_request(int sockfd, int my_seqnumber);
+int protocol_force_request(int sockfd, int my_seqnumber);
+int protocol_handle_link(PeerState *state, int client_fd, 
+                         const char *message, char *client_ip);
+
+/* Protocolos de pesquisa */
+int protocol_query_identifier(int sockfd, const char *identifier, int hopcount);
+int protocol_handle_query(PeerState *state, int sockfd, const char *message);
+
+/* Gestão de vizinhos */
+int add_neighbor(PeerState *state, PeerInfo *peer, int sockfd, int is_external);
+int remove_neighbor(PeerState *state, int seqnumber);
+int count_external_neighbors(PeerState *state);
+int count_internal_neighbors(PeerState *state);
+Neighbor* find_neighbor_by_seqnumber(PeerState *state, int seqnumber);
+Neighbor* find_internal_with_higher_seqnumber(PeerState *state, int seqnumber);
+
+/* Estabelecimento de ligações */
+int establish_connections(PeerState *state, PeerList *peer_list);
+int reconnect_after_disconnect(PeerState *state);
+
+#endif /* PROTOCOL_H */
+```
+
+## 6. include/ui.h
+
+```c
+#ifndef UI_H
+#define UI_H
+
+#include "common.h"
+
+/* Comandos da interface */
+void ui_start(PeerState *state);
+void ui_process_command(PeerState *state, const char *command);
+
+/* Handlers de comandos */
+void cmd_join(PeerState *state);
+void cmd_leave(PeerState *state);
+void cmd_show_neighbors(PeerState *state);
+void cmd_release(PeerState *state, int seqnumber);
+void cmd_list_identifiers(PeerState *state);
+void cmd_post(PeerState *state, const char *identifier);
+void cmd_search(PeerState *state, const char *identifier);
+void cmd_unpost(PeerState *state, const char *identifier);
+void cmd_exit(PeerState *state);
+
+/* Funções auxiliares de UI */
+void print_prompt();
+void print_help();
+
+#endif /* UI_H */
+```
+
+---
+
+## 7. src/network.c
+
+```c
+#include "../include/network.h"
+#include <fcntl.h>
+
+/* Cria socket UDP */
+int create_udp_socket() {
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket");
+        return -1;
+    }
+    return sockfd;
+}
+
+/* Envia mensagem UDP */
+int udp_send(int sockfd, const char *ip, int port, const char *message) {
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    
+    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
+        perror("inet_pton");
+        return -1;
+    }
+    
+    int sent = sendto(sockfd, message, strlen(message), 0,
+                     (struct sockaddr *)&server_addr, sizeof(server_addr));
+    if (sent < 0) {
+        perror("sendto");
+        return -1;
+    }
+    
+    return sent;
+}
+
+/* Recebe mensagem UDP */
+int udp_receive(int sockfd, char *buffer, int buffer_size, 
+                struct sockaddr_in *from_addr) {
+    socklen_t addr_len = sizeof(*from_addr);
+    int received = recvfrom(sockfd, buffer, buffer_size - 1, 0,
+                           (struct sockaddr *)from_addr, &addr_len);
+    if (received < 0) {
+        perror("recvfrom");
+        return -1;
+    }
+    
+    buffer[received] = '\0';
+    return received;
+}
+
+/* Conecta via TCP */
+int tcp_connect(const char *ip, int port) {
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("socket");
+        return -1;
+    }
+    
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    
+    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
+        perror("inet_pton");
+        close(sockfd);
+        return -1;
+    }
+    
+    if (connect(sockfd, (struct sockaddr *)&server_addr, 
+                sizeof(server_addr)) < 0) {
+        perror("connect");
+        close(sockfd);
+        return -1;
+    }
+    
+    return sockfd;
+}
+
+/* Envia mensagem TCP */
+int tcp_send(int sockfd, const char *message) {
+    int len = strlen(message);
+    int sent = write(sockfd, message, len);
+    if (sent < 0) {
+        perror("write");
+        return -1;
+    }
+    return sent;
+}
+
+/* Recebe mensagem TCP */
+int tcp_receive(int sockfd, char *buffer, int buffer_size) {
+    int received = read(sockfd, buffer, buffer_size - 1);
+    if (received < 0) {
+        perror("read");
+        return -1;
+    }
+    buffer[received] = '\0';
+    return received;
+}
+
+/* Cria servidor TCP */
+int create_tcp_server(int port) {
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("socket");
+        return -1;
+    }
+    
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+        close(sockfd);
+        return -1;
+    }
+    
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(port);
+    
+    if (bind(sockfd, (struct sockaddr *)&server_addr, 
+             sizeof(server_addr)) < 0) {
+        perror("bind");
+        close(sockfd);
+        return -1;
+    }
+    
+    if (listen(sockfd, 10) < 0) {
+        perror("listen");
+        close(sockfd);
+        return -1;
+    }
+    
+    return sockfd;
+}
+
+/* Aceita conexão TCP */
+int tcp_accept(int server_fd, char *client_ip) {
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    
+    int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, 
+                          &addr_len);
+    if (client_fd < 0) {
+        perror("accept");
+        return -1;
+    }
+    
+    if (client_ip) {
+        inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, 16);
+    }
+    
+    return client_fd;
+}
+
+/* Fecha socket */
+void close_socket(int sockfd) {
+    if (sockfd >= 0) {
+        close(sockfd);
+    }
+}
+
+/* Define socket como não-bloqueante */
+int set_socket_nonblocking(int sockfd) {
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags < 0) {
+        perror("fcntl F_GETFL");
+        return -1;
+    }
+    
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        perror("fcntl F_SETFL");
+        return -1;
+    }
+    
+    return 0;
+}
+```
+
+## 12. src/peer_server_main.c
+
+```c
+#include "../include/peer_server.h"
+#include <signal.h>
+
+static volatile int running = 1;
+
+void signal_handler(int sig) {
+    running = 0;
+    printf("\n[SERVIDOR] A encerrar...\n");
+}
+
+int main(int argc, char *argv[]) {
+    int port = DEFAULT_SERVER_PORT;
+    
+    /* Parse argumentos */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            port = atoi(argv[i + 1]);
+            i++;
+        }
+    }
+    
+    signal(SIGINT, signal_handler);
+    
+    PeerServer *server = peer_server_create(port);
+    if (!server) {
+        fprintf(stderr, "Erro ao criar servidor de peers.\n");
+        return 1;
+    }
+    
+    peer_server_start(server);
+    
+    peer_server_destroy(server);
+    return 0;
+}
+```
+
+## 13. src/p2pnet_main.c
+
+```c
+#include "../include/common.h"
+#include "../include/ui.h"
+#include "../include/network.h"
+#include "../include/protocol.h"
+#include <pthread.h>
+
+/* Thread para aceitar conexões TCP */
+void* accept_connections_thread(void *arg) {
+    PeerState *state = (PeerState *)arg;
+    
+    while (state->joined) {
+        char client_ip[16];
+        int client_fd = tcp_accept(state->tcp_server_fd, client_ip);
+        
+        if (client_fd < 0) {
+            continue;
+        }
+        
+        /* Recebe mensagem */
+        char buffer[BUFFER_SIZE];
+        if (tcp_receive(client_fd, buffer, sizeof(buffer)) > 0) {
+            printf("[CONEXÃO] Recebido: %s", buffer);
+            protocol_handle_link(state, client_fd, buffer, client_ip);
+        } else {
+            close_socket(client_fd);
+        }
+    }
+    
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    PeerState state;
+    memset(&state, 0, sizeof(state));
+    
+    /* Valores padrão */
+    strcpy(state.server_ip, DEFAULT_SERVER_IP);
+    state.server_port = DEFAULT_SERVER_PORT;
+    state.tcp_port = 0;
+    state.max_neighbors = 3;
+    state.max_hopcount = DEFAULT_HOPCOUNT;
+    
+    /* Parse argumentos */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+            strcpy(state.server_ip, argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            state.server_port = atoi(argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            state.tcp_port = atoi(argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
+            state.max_neighbors = atoi(argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "-h") == 0 && i + 1 < argc) {
+            state.max_hopcount = atoi(argv[i + 1]);
+            i++;
+        }
+    }
+    
+    /* Validações */
+    if (state.tcp_port == 0) {
+        fprintf(stderr, "Erro: porta TCP (-l) é obrigatória\n");
+        return 1;
+    }
+    
+    if (state.max_neighbors <= 0) {
+        fprintf(stderr, "Erro: número de vizinhos (-n) deve ser > 0\n");
+        return 1;
+    }
+    
+    if (state.max_hopcount <= 0) {
+        fprintf(stderr, "Erro: hopcount (-h) deve ser > 0\n");
+        return 1;
+    }
+    
+    /* Cria servidor TCP */
+    state.tcp_server_fd = create_tcp_server(state.tcp_port);
+    if (state.tcp_server_fd < 0) {
+        fprintf(stderr, "Erro ao criar servidor TCP na porta %d\n", 
+                state.tcp_port);
+        return 1;
+    }
+    
+    printf("P2P Overlay Network\n");
+    printf("Servidor TCP na porta %d\n", state.tcp_port);
+    printf("Servidor de peers: %s:%d\n", state.server_ip, state.server_port);
+    printf("Max vizinhos: %d, Max hopcount: %d\n\n", 
+           state.max_neighbors, state.max_hopcount);
+    
+    /* Thread para aceitar conexões */
+    pthread_t accept_thread;
+    pthread_create(&accept_thread, NULL, accept_connections_thread, &state);
+    
+    /* Interface de usuário */
+    ui_start(&state);
+    
+    /* Cleanup */
+    close_socket(state.tcp_server_fd);
+    pthread_cancel(accept_thread);
+    pthread_join(accept_thread, NULL);
+    
+    return 0;
+}
+```
+
+## 14. Makefile
+
+```makefile
+CC = gcc
+CFLAGS = -Wall -Wextra -I./include -pthread
+LDFLAGS = -pthread
+
+# Diretórios
+SRC_DIR = src
+INC_DIR = include
+OBJ_DIR = obj
+BIN_DIR = bin
+
+# Criar diretórios
+$(shell mkdir -p $(OBJ_DIR) $(BIN_DIR))
+
+# Arquivos objeto
+PEER_SERVER_OBJS = $(OBJ_DIR)/peer_server_main.o $(OBJ_DIR)/peer_server.o \
+                   $(OBJ_DIR)/network.o
+P2PNET_OBJS = $(OBJ_DIR)/p2pnet_main.o $(OBJ_DIR)/peer_client.o \
+              $(OBJ_DIR)/network.o $(OBJ_DIR)/protocol.o $(OBJ_DIR)/ui.o
+
+# Targets
+all: $(BIN_DIR)/peer_server $(BIN_DIR)/p2pnet
+
+$(BIN_DIR)/peer_server: $(PEER_SERVER_OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BIN_DIR)/p2pnet: $(P2PNET_OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+# Compilação dos objetos
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Limpeza
+clean:
+	rm -rf $(OBJ_DIR) $(BIN_DIR)
+
+# Dependências
+$(OBJ_DIR)/peer_server_main.o: $(INC_DIR)/peer_server.h $(INC_DIR)/common.h
+$(OBJ_DIR)/peer_server.o: $(INC_DIR)/peer_server.h $(INC_DIR)/network.h $(INC_DIR)/common.h
+$(OBJ_DIR)/p2pnet_main.o: $(INC_DIR)/ui.h $(INC_DIR)/network.h $(INC_DIR)/protocol.h $(INC_DIR)/common.h
+$(OBJ_DIR)/peer_client.o: $(INC_DIR)/peer_client.h $(INC_DIR)/network.h $(INC_DIR)/common.h
+$(OBJ_DIR)/protocol.o: $(INC_DIR)/protocol.h $(INC_DIR)/network.h $(INC_DIR)/peer_client.h $(INC_DIR)/common.h
+$(OBJ_DIR)/ui.o: $(INC_DIR)/ui.h $(INC_DIR)/peer_client.h $(INC_DIR)/protocol.h $(INC_DIR)/common.h
+$(OBJ_DIR)/network.o: $(INC_DIR)/network.h $(INC_DIR)/common.h
+
+.PHONY: all clean
+```
+
+## 15. Vagrantfile
+
+```ruby
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # Box base
+  config.vm.box = "ubuntu/focal64"
+  
+  # Servidor de Peers
+  config.vm.define "peer_server" do |server|
+    server.vm.hostname = "peer-server"
+    server.vm.network "private_network", ip: "192.168.56.21"
+    
+    server.vm.provider "virtualbox" do |vb|
+      vb.memory = "512"
+      vb.cpus = 1
+    end
+    
+    server.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y build-essential gcc make gdb
+    SHELL
+  end
+  
+  # Peer 1
+  config.vm.define "peer1" do |peer|
+    peer.vm.hostname = "peer1"
+    peer.vm.network "private_network", ip: "192.168.56.10"
+    
+    peer.vm.provider "virtualbox" do |vb|
+      vb.memory = "512"
+      vb.cpus = 1
+    end
+    
+    peer.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y build-essential gcc make gdb
+    SHELL
+  end
+  
+  # Peer 2
+  config.vm.define "peer2" do |peer|
+    peer.vm.hostname = "peer2"
+    peer.vm.network "private_network", ip: "192.168.56.11"
+    
+    peer.vm.provider "virtualbox" do |vb|
+      vb.memory = "512"
+      vb.cpus = 1
+    end
+    
+    peer.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y build-essential gcc make gdb
+    SHELL
+  end
+  
+  # Peer 3
+  config.vm.define "peer3" do |peer|
+    peer.vm.hostname = "peer3"
+    peer.vm.network "private_network", ip: "192.168.56.12"
+    
+    peer.vm.provider "virtualbox" do |vb|
+      vb.memory = "512"
+      vb.cpus = 1
+    end
+    
+    peer.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y build-essential gcc make gdb
+    SHELL
+  end
+  
+  # Sincronização de pasta
+  config.vm.synced_folder ".", "/home/vagrant/p2pnet"
+end
+```
+
+## 16. README.md
+
+```markdown
+# P2P Overlay Network
+
+Implementação de uma rede sobreposta Peer-to-Peer com protocolo de camada de aplicação.
+
+## Estrutura do Projeto
+
+- `include/` - Arquivos header (.h)
+- `src/` - Código fonte (.c)
+- `obj/` - Arquivos objeto (gerados)
+- `bin/` - Executáveis (gerados)
+
+## Compilação
+
+```bash
+make
+```
+
+Isto gera dois executáveis:
+- `bin/peer_server` - Servidor de peers (UDP)
+- `bin/p2pnet` - Aplicação peer
+
+## Execução
+
+### 1. Iniciar o Servidor de Peers
+
+```bash
+./bin/peer_server [-p port]
+```
+
+Exemplo:
+```bash
+./bin/peer_server -p 58000
+```
+
+### 2. Iniciar Peers
+
+```bash
+./bin/p2pnet -l <lnkport> [-s addr] [-p prport] [-n neigh] [-h hc]
+```
+
+Exemplo:
+```bash
+./bin/p2pnet -l 5001 -s 192.168.56.21 -p 58000 -n 3 -h 5
+```
+
+Parâmetros:
+- `-l lnkport` - Porta TCP para escutar ligações (obrigatório)
+- `-s addr` - IP do servidor de peers (padrão: 192.168.56.21)
+- `-p prport` - Porta do servidor de peers (padrão: 58000)
+- `-n neigh` - Número máximo de vizinhos (padrão: 3)
+- `-h hc` - Número máximo de saltos (padrão: 5)
+
+## Comandos da Aplicação
+
+- `join` - Entrar na rede
+- `leave` - Sair da rede
+- `show neighbors` - Mostrar vizinhos
+- `release <seqnumber>` - Remover vizinho interno
+- `list identifiers` - Listar identificadores
+- `post <id>` - Adicionar identificador
+- `search <id>` - Pesquisar identificador
+- `unpost <id>` - Remover identificador
+- `exit` - Sair
+
+## Testes com Vagrant
+
+```bash
+# Iniciar VMs
+vagrant up
+
+# SSH para servidor
+vagrant ssh peer_server
+
+# SSH para peers
+vagrant ssh peer1
+vagrant ssh peer2
+vagrant ssh peer3
+```
+
+## Divisão de Trabalho
+
+### Membro 1: Servidor de Peers
+- `peer_server.h/c`
+- `peer_server_main.c`
+- Protocolo UDP
+
+### Membro 2: Protocolos Overlay
+- `protocol.h/c`
+- `network.c` (TCP)
+- Gestão de ligações
+
+### Membro 3: Interface e Cliente
+- `ui.h/c`
+- `peer_client.h/c`
+- `p2pnet_main.c`
+
+## Limpeza
+
+```bash
+make clean
+```
+```
+
+## 11. src/ui.c
+
+```c
+#include "../include/ui.h"
+#include "../include/peer_client.h"
+#include "../include/protocol.h"
+#include <signal.h>
+
+static volatile int running = 1;
+
+void signal_handler(int sig) {
+    running = 0;
+}
+
+/* Inicia interface */
+void ui_start(PeerState *state) {
+    char command[256];
+    
+    signal(SIGINT, signal_handler);
+    
+    print_help();
+    
+    while (running) {
+        print_prompt();
+        
+        if (fgets(command, sizeof(command), stdin) == NULL) {
+            break;
+        }
+        
+        command[strcspn(command, "\n")] = 0;
+        
+        if (strlen(command) == 0) {
+            continue;
+        }
+        
+        ui_process_command(state, command);
+    }
+    
+    if (state->joined) {
+        cmd_leave(state);
+    }
+}
+
+/* Processa comando */
+void ui_process_command(PeerState *state, const char *command) {
+    char cmd[64], arg[256];
+    
+    if (strcmp(command, "join") == 0) {
+        cmd_join(state);
+    } else if (strcmp(command, "leave") == 0) {
+        cmd_leave(state);
+    } else if (strcmp(command, "show neighbors") == 0) {
+        cmd_show_neighbors(state);
+    } else if (sscanf(command, "release %d", &(int){0}) == 1) {
+        int seqnum;
+        sscanf(command, "release %d", &seqnum);
+        cmd_release(state, seqnum);
+    } else if (strcmp(command, "list identifiers") == 0) {
+        cmd_list_identifiers(state);
+    } else if (sscanf(command, "post %s", arg) == 1) {
+        cmd_post(state, arg);
+    } else if (sscanf(command, "search %s", arg) == 1) {
+        cmd_search(state, arg);
+    } else if (sscanf(command, "unpost %s", arg) == 1) {
+        cmd_unpost(state, arg);
+    } else if (strcmp(command, "exit") == 0) {
+        cmd_exit(state);
+        running = 0;
+    } else if (strcmp(command, "help") == 0) {
+        print_help();
+    } else {
+        printf("Comando desconhecido. Digite 'help' para ajuda.\n");
+    }
+}
+
+/* Comando join */
+void cmd_join(PeerState *state) {
+    if (state->joined) {
+        printf("Já está na rede.\n");
+        return;
+    }
+    
+    /* Regista no servidor */
+    if (peer_client_register(state->server_ip, state->server_port,
+                            state->tcp_port, &state->seqnumber) < 0) {
+        printf("Erro ao registar no servidor de peers.\n");
+        return;
+    }
+    
+    printf("Registado com seqnumber %d\n", state->seqnumber);
+    
+    /* Obtém lista de peers */
+    PeerList peer_list;
+    if (peer_client_get_peers(state->server_ip, state->server_port, 
+                             &peer_list) < 0) {
+        printf("Erro ao obter lista de peers.\n");
+        peer_client_unregister(state->server_ip, state->server_port, 
+                              state->seqnumber);
+        return;
+    }
+    
+    printf("Obtidos %d peers da rede.\n", peer_list.count);
+    
+    /* Estabelece ligações */
+    int connected = establish_connections(state, &peer_list);
+    
+    state->joined = 1;
+    
+    if (connected > 0) {
+        printf("Ligado à rede com %d vizinhos.\n", connected);
+    } else if (peer_list.count == 0) {
+        printf("És o primeiro peer na rede.\n");
+    } else {
+        printf("Aviso: Não conseguiu ligar-se a nenhum peer.\n");
+    }
+}
+
+/* Comando leave */
+void cmd_leave(PeerState *state) {
+    if (!state->joined) {
+        printf("Não está na rede.\n");
+        return;
+    }
+    
+    /* Remove registo */
+    peer_client_unregister(state->server_ip, state->server_port, 
+                          state->seqnumber);
+    
+    /* Fecha todas ligações */
+    for (int i = 0; i < state->neighbors.count; i++) {
+        close_socket(state->neighbors.neighbors[i].socket_fd);
+    }
+    
+    state->neighbors.count = 0;
+    state->joined = 0;
+    
+    printf("Abandonou a rede.\n");
+}
+
+/* Comando show neighbors */
+void cmd_show_neighbors(PeerState *state) {
+    if (!state->joined) {
+        printf("Não está na rede.\n");
+        return;
+    }
+    
+    int external = 0, internal = 0;
+    
+    printf("\nVizinhos Externos:\n");
+    for (int i = 0; i < state->neighbors.count; i++) {
+        Neighbor *n = &state->neighbors.neighbors[i];
+        if (n->is_external) {
+            printf("  %s:%d seqnumber=%d\n", 
+                   n->info.ip, n->info.port, n->info.seqnumber);
+            external++;
+        }
+    }
+    if (external == 0) printf("  (nenhum)\n");
+    
+    printf("\nVizinhos Internos:\n");
+    for (int i = 0; i < state->neighbors.count; i++) {
+        Neighbor *n = &state->neighbors.neighbors[i];
+        if (!n->is_external) {
+            printf("  %s:%d seqnumber=%d\n", 
+                   n->info.ip, n->info.port, n->info.seqnumber);
+            internal++;
+        }
+    }
+    if (internal == 0) printf("  (nenhum)\n");
+    
+    printf("\n");
+}
+
+/* Comando release */
+void cmd_release(PeerState *state, int seqnumber) {
+    if (!state->joined) {
+        printf("Não está na rede.\n");
+        return;
+    }
+    
+    Neighbor *neighbor = find_neighbor_by_seqnumber(state, seqnumber);
+    if (!neighbor) {
+        printf("Vizinho com seqnumber %d não encontrado.\n", seqnumber);
+        return;
+    }
+    
+    if (neighbor->is_external) {
+        printf("Apenas pode remover vizinhos internos.\n");
+        return;
+    }
+    
+    if (remove_neighbor(state, seqnumber) == 0) {
+        printf("Ligação com peer %d removida.\n", seqnumber);
+    }
+}
+
+/* Comando list identifiers */
+void cmd_list_identifiers(PeerState *state) {
+    printf("\nIdentificadores conhecidos:\n");
+    
+    if (state->identifiers.count == 0) {
+        printf("  (nenhum)\n");
+    } else {
+        for (int i = 0; i < state->identifiers.count; i++) {
+            printf("  %s\n", state->identifiers.identifiers[i]);
+        }
+    }
+    
+    printf("\n");
+}
+
+/* Comando post */
+void cmd_post(PeerState *state, const char *identifier) {
+    if (state->identifiers.count >= MAX_IDENTIFIERS) {
+        printf("Lista de identificadores cheia.\n");
+        return;
+    }
+    
+    /* Verifica se já existe */
+    for (int i = 0; i < state->identifiers.count; i++) {
+        if (strcmp(state->identifiers.identifiers[i], identifier) == 0) {
+            printf("Identificador já existe.\n");
+            return;
+        }
+    }
+    
+    strcpy(state->identifiers.identifiers[state->identifiers.count], identifier);
+    state->identifiers.count++;
+    
+    printf("Identificador '%s' adicionado.\n", identifier);
+}
+
+/* Comando search */
+void cmd_search(PeerState *state, const char *identifier) {
+    if (!state->joined) {
+        printf("Não está na rede.\n");
+        return;
+    }
+    
+    /* Verifica se já tem */
+    for (int i = 0; i < state->identifiers.count; i++) {
+        if (strcmp(state->identifiers.identifiers[i], identifier) == 0) {
+            printf("Identificador '%s' já conhecido.\n", identifier);
+            return;
+        }
+    }
+    
+    /* Pergunta aos vizinhos */
+    int found = 0;
+    for (int i = 0; i < state->neighbors.count; i++) {
+        Neighbor *n = &state->neighbors.neighbors[i];
+        
+        protocol_query_identifier(n->socket_fd, identifier, 
+                                 state->max_hopcount);
+        
+        char response[256];
+        if (tcp_receive(n->socket_fd, response, sizeof(response)) > 0) {
+            if (strncmp(response, "FND", 3) == 0) {
+                found = 1;
+                break;
+            }
+        }
+    }
+    
+    if (found) {
+        strcpy(state->identifiers.identifiers[state->identifiers.count], 
+               identifier);
+        state->identifiers.count++;
+        printf("Identificador '%s' encontrado e adicionado.\n", identifier);
+    } else {
+        printf("Identificador '%s' não encontrado na rede.\n", identifier);
+    }
+}
+
+/* Comando unpost */
+void cmd_unpost(PeerState *state, const char *identifier) {
+    for (int i = 0; i < state->identifiers.count; i++) {
+        if (strcmp(state->identifiers.identifiers[i], identifier) == 0) {
+            for (int j = i; j < state->identifiers.count - 1; j++) {
+                strcpy(state->identifiers.identifiers[j],
+                       state->identifiers.identifiers[j + 1]);
+            }
+            state->identifiers.count--;
+            printf("Identificador '%s' removido.\n", identifier);
+            return;
+        }
+    }
+    
+    printf("Identificador '%s' não encontrado.\n", identifier);
+}
+
+/* Comando exit */
+void cmd_exit(PeerState *state) {
+    printf("A sair...\n");
+    cmd_leave(state);
+}
+
+/* Imprime prompt */
+void print_prompt() {
+    printf("p2pnet> ");
+    fflush(stdout);
+}
+
+/* Imprime ajuda */
+void print_help() {
+    printf("\n=== P2P Overlay Network ===\n");
+    printf("Comandos disponíveis:\n");
+    printf("  join                    - Entrar na rede\n");
+    printf("  leave                   - Sair da rede\n");
+    printf("  show neighbors          - Mostrar vizinhos\n");
+    printf("  release <seqnumber>     - Remover vizinho interno\n");
+    printf("  list identifiers        - Listar identificadores\n");
+    printf("  post <id>               - Adicionar identificador\n");
+    printf("  search <id>             - Pesquisar identificador\n");
+    printf("  unpost <id>             - Remover identificador\n");
+    printf("  exit                    - Sair da aplicação\n");
+    printf("  help                    - Mostrar esta ajuda\n");
+    printf("\n");
+}
+```
+
+## 9. src/peer_client.c
+
+```c
+#include "../include/peer_client.h"
+#include "../include/network.h"
+
+/* Registra peer no servidor */
+int peer_client_register(const char *server_ip, int server_port, 
+                         int tcp_port, int *seqnumber) {
+    int sockfd = create_udp_socket();
+    if (sockfd < 0) {
+        return -1;
+    }
+    
+    char message[256];
+    sprintf(message, "REG %d", tcp_port);
+    
+    if (udp_send(sockfd, server_ip, server_port, message) < 0) {
+        close_socket(sockfd);
+        return -1;
+    }
+    
+    char response[BUFFER_SIZE];
+    struct sockaddr_in from_addr;
+    
+    if (udp_receive(sockfd, response, sizeof(response), &from_addr) < 0) {
+        close_socket(sockfd);
+        return -1;
+    }
+    
+    if (sscanf(response, "SQN %d", seqnumber) == 1) {
+        close_socket(sockfd);
+        return 0;
+    }
+    
+    close_socket(sockfd);
+    return -1;
+}
+
+/* Remove registro do peer */
+int peer_client_unregister(const char *server_ip, int server_port, 
+                           int seqnumber) {
+    int sockfd = create_udp_socket();
+    if (sockfd < 0) {
+        return -1;
+    }
+    
+    char message[256];
+    sprintf(message, "UNR %d", seqnumber);
+    
+    if (udp_send(sockfd, server_ip, server_port, message) < 0) {
+        close_socket(sockfd);
+        return -1;
+    }
+    
+    char response[BUFFER_SIZE];
+    struct sockaddr_in from_addr;
+    
+    if (udp_receive(sockfd, response, sizeof(response), &from_addr) < 0) {
+        close_socket(sockfd);
+        return -1;
+    }
+    
+    int result = (strcmp(response, "OK") == 0) ? 0 : -1;
+    close_socket(sockfd);
+    return result;
+}
+
+/* Obtém lista de peers */
+int peer_client_get_peers(const char *server_ip, int server_port, 
+                          PeerList *peer_list) {
+    int sockfd = create_udp_socket();
+    if (sockfd < 0) {
+        return -1;
+    }
+    
+    if (udp_send(sockfd, server_ip, server_port, "PEERS") < 0) {
+        close_socket(sockfd);
+        return -1;
+    }
+    
+    char response[BUFFER_SIZE];
+    struct sockaddr_in from_addr;
+    
+    if (udp_receive(sockfd, response, sizeof(response), &from_addr) < 0) {
+        close_socket(sockfd);
+        return -1;
+    }
+    
+    close_socket(sockfd);
+    
+    /* Parse resposta */
+    peer_list->count = 0;
+    
+    char *line = strtok(response, "\n");
+    if (!line || strcmp(line, "LST") != 0) {
+        return -1;
+    }
+    
+    while ((line = strtok(NULL, "\n")) != NULL) {
+        if (strlen(line) == 0) break;
+        
+        PeerInfo *peer = &peer_list->peers[peer_list->count];
+        int port, seqnum;
+        
+        if (sscanf(line, "%15[^:]:%d#%d", peer->ip, &port, &seqnum) == 3) {
+            peer->port = port;
+            peer->seqnumber = seqnum;
+            peer_list->count++;
+            
+            if (peer_list->count >= MAX_PEERS) break;
+        }
+    }
+    
+    return 0;
+}
+```
+
+## 10. src/protocol.c
+
+```c
+#include "../include/protocol.h"
+#include "../include/network.h"
+#include "../include/peer_client.h"
+
+/* Envia pedido LNK */
+int protocol_link_request(int sockfd, int my_seqnumber) {
+    char message[256];
+    sprintf(message, "LNK %d\n", my_seqnumber);
+    return tcp_send(sockfd, message);
+}
+
+/* Envia pedido FRC */
+int protocol_force_request(int sockfd, int my_seqnumber) {
+    char message[256];
+    sprintf(message, "FRC %d\n", my_seqnumber);
+    return tcp_send(sockfd, message);
+}
+
+/* Trata pedido de ligação */
+int protocol_handle_link(PeerState *state, int client_fd, 
+                         const char *message, char *client_ip) {
+    int client_seqnumber;
+    int is_force = 0;
+    
+    if (sscanf(message, "LNK %d", &client_seqnumber) == 1) {
+        is_force = 0;
+    } else if (sscanf(message, "FRC %d", &client_seqnumber) == 1) {
+        is_force = 1;
+    } else {
+        return -1;
+    }
+    
+    int internal_count = count_internal_neighbors(state);
+    
+    /* Pode aceitar a ligação */
+    if (internal_count < state->max_neighbors) {
+        tcp_send(client_fd, "CNF\n");
+        
+        PeerInfo peer_info;
+        strcpy(peer_info.ip, client_ip);
+        peer_info.port = 0; /* Não sabemos porta do peer cliente */
+        peer_info.seqnumber = client_seqnumber;
+        
+        add_neighbor(state, &peer_info, client_fd, 0);
+        printf("[PROTOCOLO] Ligação aceite de peer %d\n", client_seqnumber);
+        return 0;
+    }
+    
+    /* Se FRC e tem vizinho com seqnumber maior */
+    if (is_force) {
+        Neighbor *higher = find_internal_with_higher_seqnumber(state, 
+                                                               client_seqnumber);
+        if (higher) {
+            tcp_send(client_fd, "CNF\n");
+            
+            PeerInfo peer_info;
+            strcpy(peer_info.ip, client_ip);
+            peer_info.port = 0;
+            peer_info.seqnumber = client_seqnumber;
+            
+            /* Remove vizinho com seqnumber maior */
+            int removed_seq = higher->info.seqnumber;
+            remove_neighbor(state, removed_seq);
+            
+            /* Adiciona novo vizinho */
+            add_neighbor(state, &peer_info, client_fd, 0);
+            
+            printf("[PROTOCOLO] Ligação FRC aceite de peer %d, removido peer %d\n",
+                   client_seqnumber, removed_seq);
+            return 0;
+        }
+    }
+    
+    /* Não pode aceitar */
+    close_socket(client_fd);
+    return -1;
+}
+
+/* Envia query de identificador */
+int protocol_query_identifier(int sockfd, const char *identifier, int hopcount) {
+    char message[256];
+    sprintf(message, "QRY %s %d\n", identifier, hopcount);
+    return tcp_send(sockfd, message);
+}
+
+/* Trata query de identificador */
+int protocol_handle_query(PeerState *state, int sockfd, const char *message) {
+    char identifier[MAX_IDENTIFIER_LEN];
+    int hopcount;
+    
+    if (sscanf(message, "QRY %s %d", identifier, &hopcount) != 2) {
+        return -1;
+    }
+    
+    /* Verifica se tem identificador */
+    for (int i = 0; i < state->identifiers.count; i++) {
+        if (strcmp(state->identifiers.identifiers[i], identifier) == 0) {
+            char response[256];
+            sprintf(response, "FND %s\n", identifier);
+            tcp_send(sockfd, response);
+            return 1;
+        }
+    }
+    
+    /* Se hopcount > 1, pergunta aos vizinhos */
+    if (hopcount > 1) {
+        for (int i = 0; i < state->neighbors.count; i++) {
+            Neighbor *neighbor = &state->neighbors.neighbors[i];
+            protocol_query_identifier(neighbor->socket_fd, identifier, 
+                                    hopcount - 1);
+            
+            char response[256];
+            if (tcp_receive(neighbor->socket_fd, response, 
+                          sizeof(response)) > 0) {
+                if (strncmp(response, "FND", 3) == 0) {
+                    char fwd[256];
+                    sprintf(fwd, "FND %s\n", identifier);
+                    tcp_send(sockfd, fwd);
+                    return 1;
+                }
+            }
+        }
+    }
+    
+    char response[256];
+    sprintf(response, "NOTFND %s\n", identifier);
+    tcp_send(sockfd, response);
+    return 0;
+}
+
+/* Adiciona vizinho */
+int add_neighbor(PeerState *state, PeerInfo *peer, int sockfd, int is_external) {
+    if (state->neighbors.count >= MAX_NEIGHBORS * 2) {
+        return -1;
+    }
+    
+    Neighbor *neighbor = &state->neighbors.neighbors[state->neighbors.count];
+    neighbor->info = *peer;
+    neighbor->socket_fd = sockfd;
+    neighbor->is_external = is_external;
+    
+    state->neighbors.count++;
+    return 0;
+}
+
+/* Remove vizinho por seqnumber */
+int remove_neighbor(PeerState *state, int seqnumber) {
+    for (int i = 0; i < state->neighbors.count; i++) {
+        if (state->neighbors.neighbors[i].info.seqnumber == seqnumber) {
+            close_socket(state->neighbors.neighbors[i].socket_fd);
+            
+            for (int j = i; j < state->neighbors.count - 1; j++) {
+                state->neighbors.neighbors[j] = state->neighbors.neighbors[j + 1];
+            }
+            
+            state->neighbors.count--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Conta vizinhos externos */
+int count_external_neighbors(PeerState *state) {
+    int count = 0;
+    for (int i = 0; i < state->neighbors.count; i++) {
+        if (state->neighbors.neighbors[i].is_external) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/* Conta vizinhos internos */
+int count_internal_neighbors(PeerState *state) {
+    int count = 0;
+    for (int i = 0; i < state->neighbors.count; i++) {
+        if (!state->neighbors.neighbors[i].is_external) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/* Encontra vizinho por seqnumber */
+Neighbor* find_neighbor_by_seqnumber(PeerState *state, int seqnumber) {
+    for (int i = 0; i < state->neighbors.count; i++) {
+        if (state->neighbors.neighbors[i].info.seqnumber == seqnumber) {
+            return &state->neighbors.neighbors[i];
+        }
+    }
+    return NULL;
+}
+
+/* Encontra vizinho interno com seqnumber maior */
+Neighbor* find_internal_with_higher_seqnumber(PeerState *state, int seqnumber) {
+    for (int i = 0; i < state->neighbors.count; i++) {
+        Neighbor *n = &state->neighbors.neighbors[i];
+        if (!n->is_external && n->info.seqnumber > seqnumber) {
+            return n;
+        }
+    }
+    return NULL;
+}
+
+/* Estabelece ligações iniciais */
+int establish_connections(PeerState *state, PeerList *peer_list) {
+    int connected = 0;
+    
+    for (int i = 0; i < peer_list->count && connected < state->max_neighbors; i++) {
+        PeerInfo *peer = &peer_list->peers[i];
+        
+        /* Apenas conecta com peers de seqnumber menor */
+        if (peer->seqnumber >= state->seqnumber) {
+            continue;
+        }
+        
+        int sockfd = tcp_connect(peer->ip, peer->port);
+        if (sockfd < 0) {
+            continue;
+        }
+        
+        if (protocol_link_request(sockfd, state->seqnumber) < 0) {
+            close_socket(sockfd);
+            continue;
+        }
+        
+        char response[256];
+        if (tcp_receive(sockfd, response, sizeof(response)) < 0) {
+            close_socket(sockfd);
+            continue;
+        }
+        
+        if (strncmp(response, "CNF", 3) == 0) {
+            add_neighbor(state, peer, sockfd, 1);
+            connected++;
+            printf("[CONEXÃO] Ligado ao peer %d\n", peer->seqnumber);
+        } else {
+            close_socket(sockfd);
+        }
+    }
+    
+    return connected;
+}
+
+/* Reconecta após desconexão */
+int reconnect_after_disconnect(PeerState *state) {
+    if (count_external_neighbors(state) > 0) {
+        return 0;
+    }
+    
+    PeerList peer_list;
+    if (peer_client_get_peers(state->server_ip, state->server_port, 
+                             &peer_list) < 0) {
+        return -1;
+    }
+    
+    int connected = establish_connections(state, &peer_list);
+    
+    /* Se ainda não conseguiu, tenta FRC */
+    if (connected == 0) {
+        for (int i = 0; i < peer_list.count; i++) {
+            PeerInfo *peer = &peer_list.peers[i];
+            
+            if (peer->seqnumber >= state->seqnumber) {
+                continue;
+            }
+            
+            int sockfd = tcp_connect(peer->ip, peer->port);
+            if (sockfd < 0) {
+                continue;
+            }
+            
+            if (protocol_force_request(sockfd, state->seqnumber) < 0) {
+                close_socket(sockfd);
+                continue;
+            }
+            
+            char response[256];
+            if (tcp_receive(sockfd, response, sizeof(response)) > 0 &&
+                strncmp(response, "CNF", 3) == 0) {
+                add_neighbor(state, peer, sockfd, 1);
+                connected++;
+                printf("[RECONEXÃO] Ligado ao peer %d com FRC\n", 
+                       peer->seqnumber);
+                break;
+            }
+            
+            close_socket(sockfd);
+        }
+    }
+    
+    return connected;
+}
+```
+
+## 8. src/peer_server.c
+
+```c
+#include "../include/peer_server.h"
+#include "../include/network.h"
+
+/* Cria servidor de peers */
+PeerServer* peer_server_create(int port) {
+    PeerServer *server = malloc(sizeof(PeerServer));
+    if (!server) {
+        perror("malloc");
+        return NULL;
+    }
+    
+    memset(server, 0, sizeof(PeerServer));
+    server->port = port;
+    server->next_seqnumber = 1;
+    
+    server->sockfd = create_udp_socket();
+    if (server->sockfd < 0) {
+        free(server);
+        return NULL;
+    }
+    
+    /* Bind socket */
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    
+    if (bind(server->sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(server->sockfd);
+        free(server);
+        return NULL;
+    }
+    
+    printf("[SERVIDOR] Servidor de peers iniciado na porta %d\n", port);
+    return server;
+}
+
+/* Inicia servidor */
+void peer_server_start(PeerServer *server) {
+    char buffer[BUFFER_SIZE];
+    char response[BUFFER_SIZE];
+    struct sockaddr_in client_addr;
+    
+    printf("[SERVIDOR] Aguardando requisições...\n");
+    
+    while (1) {
+        memset(buffer, 0, sizeof(buffer));
+        memset(response, 0, sizeof(response));
+        
+        if (udp_receive(server->sockfd, buffer, sizeof(buffer), 
+                       &client_addr) < 0) {
+            continue;
+        }
+        
+        printf("[RECV] %s\n", buffer);
+        
+        /* Processa comando */
+        if (strncmp(buffer, "REG ", 4) == 0) {
+            handle_register(server, buffer, &client_addr, response);
+        } else if (strncmp(buffer, "UNR ", 4) == 0) {
+            handle_unregister(server, buffer, response);
+        } else if (strcmp(buffer, "PEERS") == 0) {
+            handle_peers_list(server, response);
+        } else {
+            strcpy(response, "NOK");
+        }
+        
+        /* Envia resposta */
+        sendto(server->sockfd, response, strlen(response), 0,
+               (struct sockaddr *)&client_addr, sizeof(client_addr));
+        printf("[SEND] %s\n", response);
+    }
+}
+
+/* Handler REG */
+void handle_register(PeerServer *server, const char *message, 
+                    struct sockaddr_in *client_addr, char *response) {
+    int lnkport;
+    
+    if (sscanf(message, "REG %d", &lnkport) != 1) {
+        strcpy(response, "NOK");
+        return;
+    }
+    
+    if (server->count >= MAX_PEERS) {
+        strcpy(response, "NOK");
+        return;
+    }
+    
+    /* Adiciona peer */
+    PeerServerEntry *entry = &server->entries[server->count];
+    inet_ntop(AF_INET, &client_addr->sin_addr, entry->ip, sizeof(entry->ip));
+    entry->port = lnkport;
+    entry->seqnumber = server->next_seqnumber;
+    
+    server->count++;
+    server->next_seqnumber++;
+    
+    sprintf(response, "SQN %d", entry->seqnumber);
+    printf("[REG] Peer %s:%d registrado com seqnumber %d\n", 
+           entry->ip, entry->port, entry->seqnumber);
+}
+
+/* Handler UNR */
+void handle_unregister(PeerServer *server, const char *message, char *response) {
+    int seqnumber;
+    
+    if (sscanf(message, "UNR %d", &seqnumber) != 1) {
+        strcpy(response, "NOK");
+        return;
+    }
+    
+    /* Procura peer */
+    int found = -1;
+    for (int i = 0; i < server->count; i++) {
+        if (server->entries[i].seqnumber == seqnumber) {
+            found = i;
+            break;
+        }
+    }
+    
+    if (found < 0) {
+        strcpy(response, "NOK");
+        return;
+    }
+    
+    /* Remove peer */
+    for (int i = found; i < server->count - 1; i++) {
+        server->entries[i] = server->entries[i + 1];
+    }
+    server->count--;
+    
+    strcpy(response, "OK");
+    printf("[UNR] Peer com seqnumber %d removido\n", seqnumber);
+}
+
+/* Handler PEERS */
+void handle_peers_list(PeerServer *server, char *response) {
+    strcpy(response, "LST\n");
+    
+    for (int i = 0; i < server->count; i++) {
+        char line[256];
+        sprintf(line, "%s:%d#%d\n", 
+                server->entries[i].ip,
+                server->entries[i].port,
+                server->entries[i].seqnumber);
+        strcat(response, line);
+    }
+    
+    strcat(response, "\n");
+}
+
+/* Destroi servidor */
+void peer_server_destroy(PeerServer *server) {
+    if (server) {
+        close_socket(server->sockfd);
+        free(server);
+    }
+}
+```
