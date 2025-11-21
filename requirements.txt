@@ -1,0 +1,5 @@
+# Requisitos para Python
+# Nenhuma dependência externa necessária - apenas módulos padrão do Python
+
+# Python 3.6+
+python>=3.6

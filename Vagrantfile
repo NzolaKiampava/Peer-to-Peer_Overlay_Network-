@@ -16,10 +16,7 @@ Vagrant.configure("2") do |config|
       vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       vb.memory = "512"
     end
-    server.vm.provision "shell", inline: <<-SHELL
-      apt-get update
-      apt-get install -y build-essential gcc make gdb
-    SHELL
+    # Python já está pré-instalado
   end
 
   # Peer 1
@@ -32,10 +29,7 @@ Vagrant.configure("2") do |config|
       vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       vb.memory = "512"
     end
-    peer.vm.provision "shell", inline: <<-SHELL
-      apt-get update
-      apt-get install -y build-essential gcc make gdb
-    SHELL
+    # Python já está pré-instalado
   end
 
   # Peer 2
@@ -48,26 +42,7 @@ Vagrant.configure("2") do |config|
       vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       vb.memory = "512"
     end
-    peer.vm.provision "shell", inline: <<-SHELL
-      apt-get update
-      apt-get install -y build-essential gcc make gdb
-    SHELL
-  end
-
-  # Peer 3
-  config.vm.define "peer3" do |peer|
-    peer.vm.box = "ubuntu/trusty64"
-    peer.vm.hostname = "peer3"
-    peer.vm.network "private_network", ip: "192.168.56.12"
-    peer.vm.provider "virtualbox" do |vb|
-      vb.name = "peer3"
-      vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
-      vb.memory = "512"
-    end
-    peer.vm.provision "shell", inline: <<-SHELL
-      apt-get update
-      apt-get install -y build-essential gcc make gdb
-    SHELL
+    # Python já está pré-instalado
   end
 
   # Sincronização de pasta
